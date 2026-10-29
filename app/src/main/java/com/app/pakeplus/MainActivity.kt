@@ -30,6 +30,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.GeolocationPermissions
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -354,6 +355,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        // 强制把 Cookie 写入磁盘，避免进程被系统杀掉时丢失登录态
+        CookieManager.getInstance().flush()
         webView.onPause()
         // 如果正在全屏播放视频，暂停播放
         if (customView != null) {
@@ -381,6 +384,8 @@ class MainActivity : AppCompatActivity() {
         if (customView != null) {
             hideCustomView()
         }
+        // 退出前强制落盘 Cookie，确保登录态跨启动保留
+        CookieManager.getInstance().flush()
         webView.destroy()
         super.onDestroy()
     }
