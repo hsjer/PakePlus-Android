@@ -30,8 +30,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.GeolocationPermissions
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
+import android.webkit.CookieManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
@@ -98,6 +98,12 @@ class MainActivity : AppCompatActivity() {
 
     /** 仅当 app.json 中 callPhone 为 true 才允许跳转拨号器 */
     private var allowCallPhoneFromConfig: Boolean = false
+
+    /** 应用主 URL（cookie 持久化基于此 URL） */
+    private var appUrl: String = ""
+
+    /** 本次会话访问过的所有 host，保存 cookie 时遍历它们，覆盖跨域/子域登录 */
+    private val visitedHosts = mutableSetOf<String>()
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -324,6 +330,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         // load webUrl or file:///android_asset/index.html
+        appUrl = webUrl
+        restoreCookies()
         webView.loadUrl(webUrl)
 
 //        binding = ActivityMainBinding.inflate(layoutInflater)
@@ -355,13 +363,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // 强制把 Cookie 写入磁盘，避免进程被系统杀掉时丢失登录态
-        CookieManager.getInstance().flush()
         webView.onPause()
         // 如果正在全屏播放视频，暂停播放
         if (customView != null) {
             webView.pauseTimers()
         }
+        // 持久化 cookie（含会话 cookie），App 切后台/被杀后重启无需重新登录
+        saveCookies()
     }
 
     override fun onResume() {
@@ -384,10 +392,69 @@ class MainActivity : AppCompatActivity() {
         if (customView != null) {
             hideCustomView()
         }
-        // 退出前强制落盘 Cookie，确保登录态跨启动保留
-        CookieManager.getInstance().flush()
+        // 退出前再存一次，覆盖 onPause 之后的变化
+        saveCookies()
         webView.destroy()
         super.onDestroy()
+    }
+
+    // ========== cookie 持久化：把 CookieManager 里所有 cookie（含会话 cookie）
+    // 落盘到 SharedPreferences，下次启动再写回，解决"退出后需重新登录" ==========
+
+    private fun saveCookies() {
+        try {
+            val cm = CookieManager.getInstance()
+            cm.flush() // 先把内存中的 cookie 冲刷到 WebView 数据库
+            val prefs = getSharedPreferences("pakeplus_cookies", Context.MODE_PRIVATE)
+            val hosts = visitedHosts.toMutableSet()
+            if (appUrl.isNotEmpty()) hosts.add(hostOf(appUrl))
+            if (hosts.isEmpty()) return
+
+            val editor = prefs.edit()
+            for (host in hosts) {
+                if (host.isEmpty() || host == "unknown") continue
+                // getCookie 需要一个完整 URL，这里用该 host 的 https 根地址
+                val url = "https://$host"
+                val cookieStr = cm.getCookie(url)
+                if (!cookieStr.isNullOrEmpty()) {
+                    editor.putString("cookies_$host", cookieStr)
+                }
+            }
+            editor.putString("cookie_hosts", hosts.filter { it.isNotEmpty() && it != "unknown" }.joinToString(","))
+            editor.apply()
+        } catch (e: Exception) {
+            Log.w("PakePlus", "saveCookies failed: ${e.message}")
+        }
+    }
+
+    private fun restoreCookies() {
+        try {
+            val cm = CookieManager.getInstance()
+            cm.flush()
+            val prefs = getSharedPreferences("pakeplus_cookies", Context.MODE_PRIVATE)
+            val savedHosts = prefs.getString("cookie_hosts", null)
+            if (savedHosts.isNullOrEmpty()) return
+
+            for (host in savedHosts.split(",")) {
+                if (host.isBlank()) continue
+                val saved = prefs.getString("cookies_$host", null) ?: continue
+                val url = "https://$host"
+                // 整条 cookie 串写回，CookieManager 会自动按 host 匹配
+                cm.setCookie(url, saved)
+            }
+            cm.flush()
+        } catch (e: Exception) {
+            Log.w("PakePlus", "restoreCookies failed: ${e.message}")
+        }
+    }
+
+    /** 从 URL 中提取 host（用于 SharedPreferences key） */
+    private fun hostOf(url: String): String {
+        return try {
+            android.net.Uri.parse(url).host ?: "unknown"
+        } catch (e: Exception) {
+            "unknown"
+        }
     }
 
     @Deprecated("Deprecated in Java")
@@ -1054,6 +1121,9 @@ class MainActivity : AppCompatActivity() {
 
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(view, url, favicon)
+            if (url?.startsWith("http") == true) {
+                hostOf(url).takeIf { it.isNotEmpty() }?.let { visitedHosts.add(it) }
+            }
             if (showLaunchSplash) mainFrameLoadError = false
             if (debug) {
                 // vConsole
