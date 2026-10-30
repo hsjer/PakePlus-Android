@@ -169,11 +169,11 @@
         "safeArea": "all"
     },
     "android": {
-        "name": "PakePlus",
-        "showName": "PakePlus",
-        "version": "0.0.1",
-        "webUrl": "https://juejin.cn/",
-        "id": "com.xiaoshen.pakeplus.android",
+        "name": "小米mimo",
+        "showName": "小米mimo",
+        "version": "1.0.0",
+        "webUrl": "https://aistudio.xiaomimimo.com/#/chat/68cf8486a9a0df7ee4e392d16ea07333",
+        "id": "com.hsjer.pakeplus",
         "icon": "./app-icon.png",
         "input": "./app-icon.png",
         "output": "./res",
